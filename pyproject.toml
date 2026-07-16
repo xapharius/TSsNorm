@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tssnorm"
+version = "1.0.0"
+description = "Simplifying Multi-Task Architectures Through Task-Specific Normalization (TMLR)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Mihai Suteu" },
+    { name = "Ovidiu Serban" },
+]
+dependencies = ["torch>=1.12"]
+keywords = ["multi-task learning", "batch normalization", "pytorch"]
+
+[project.optional-dependencies]
+# tssnorm.analysis needs numpy + scipy; matplotlib is for the analysis/ demo notebook.
+analysis = ["numpy", "scipy", "matplotlib"]
+
+[project.urls]
+Paper = "https://openreview.net/forum?id=QNO893OXrS"
+
+[tool.setuptools]
+packages = ["tssnorm"]

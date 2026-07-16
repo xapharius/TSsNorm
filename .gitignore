@@ -1,0 +1,15 @@
+.venv/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# os
+.DS_Store
+
+# importance matrices for the analysis demo
+analysis/models/*.npy
+analysis/models/*.pt

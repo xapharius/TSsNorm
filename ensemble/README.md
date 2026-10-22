@@ -66,7 +66,7 @@ The paper explains each point.
 ## Citation
 
 ```bibtex
-@article{suteu2026sigmanens,
+@article{suteu2026snens,
   title   = {Controllable Diversity in Normalization-Based Implicit Ensembles via
              Softmax-Temperature Modulation},
   author  = {Suteu, Mihai and Serban, Ovidiu},

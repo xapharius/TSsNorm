@@ -89,7 +89,7 @@ frameworks pin different versions.
   url     = {https://openreview.net/forum?id=QNO893OXrS}
 }
 
-@article{suteu2026sigmanens,
+@article{suteu2026snens,
   title   = {Controllable Diversity in Normalization-Based Implicit Ensembles via
              Softmax-Temperature Modulation},
   author  = {Suteu, Mihai and Serban, Ovidiu},

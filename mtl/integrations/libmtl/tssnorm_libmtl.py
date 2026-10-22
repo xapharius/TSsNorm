@@ -1,12 +1,11 @@
-"""TSsBN / TSBN for LibMTL — a zero-edit add-on.
+"""TSsBN and TSBN for LibMTL, without editing LibMTL.
 
-Targets **LibMTL GitHub main** (`pip install git+https://github.com/median-research-group/LibMTL`),
-which is what LibMTL's own `examples/` are written for. LibMTL is not modified: `register()`
-injects `TSsBN` / `TSBN` into `LibMTL.architecture` so they resolve by name (LibMTL looks the
-architecture up by string), and `TSsBNTrainer` subclasses `Trainer` to give the task-specific
-scalers their higher learning rate (Algorithm 1) via a `_prepare_optimizer` override.
-`Trainer.__init__` already calls `_prepare_optimizer` polymorphically, so no trainer edit is
-needed. `TSsBNTrainer` also honors a `device` argument (upstream `Trainer` hardcodes `cuda:0`).
+Targets LibMTL's GitHub `main`, which LibMTL's own `examples/` are written for. `register()`
+adds `TSsBN` and `TSBN` to `LibMTL.architecture`, where LibMTL looks architectures up by name.
+`TSsBNTrainer` subclasses `Trainer` and overrides `_prepare_optimizer` to give the task-specific
+scalers their higher learning rate. `Trainer.__init__` already calls `_prepare_optimizer`, so
+nothing else changes. `TSsBNTrainer` also uses its `device` argument, where the upstream
+`Trainer` always uses `cuda:0`.
 
 Usage
 -----
@@ -15,13 +14,11 @@ Usage
 >>> trainer = TSsBNTrainer(
 ...     task_dict=..., weighting="EW", architecture="TSsBN",
 ...     encoder_class=..., decoders=...,             # a backbone that uses BatchNorm
-...     arch_args={"convert": "clip+bias"},           # pretrained backbone (Table 2)
+...     arch_args={"convert": "clip+bias"},           # keep the pretrained scales
 ...     bn_lr_mul=100, device="cuda:0",
 ...     ...,
 ... )
 >>> trainer.train(train_loader, test_loader, epochs)
-
-Reproduces Table 2 (DeepLabV3 + pretrained ResNet-50, NYUv2 / Cityscapes).
 """
 
 import torch
@@ -59,7 +56,7 @@ class _TSNormArch(AbsArchitecture):
         return out
 
     def get_share_params(self):
-        """The shared parameters — everything in the encoder that is not task-specific."""
+        """The shared parameters: everything in the encoder that is not task-specific."""
         return get_other_param_group(self.encoder, excluding=TSNorm)["params"]
 
     def zero_grad_share_params(self):
@@ -70,9 +67,8 @@ class _TSNormArch(AbsArchitecture):
 class TSsBN(_TSNormArch):
     """Task-Specific sigmoid-modulated normalization: shared encoder, per-task scalers.
 
-    `convert` / `init` are forwarded to `tssnorm.wrap` (via LibMTL `arch_args`). The default
-    suits a pretrained backbone (Table 2): represent the pretrained scales with a sigmoid and
-    copy the frozen bias. For a from-scratch encoder use `convert=None, init="const"`.
+    `convert` and `init` go to `tssnorm.wrap`, through LibMTL's `arch_args`. The default suits
+    a pretrained backbone: it keeps the pretrained scales and the frozen shift. For a from-scratch encoder use `convert=None, init="const"`.
     """
 
     def __init__(self, task_name, encoder_class, decoders, rep_grad, multi_input, device,
@@ -82,7 +78,7 @@ class TSsBN(_TSNormArch):
         wrap(self.encoder, task_name, convert=convert, init=init)
 
     def importance(self, per_layer=False):
-        """The task-filter importance matrix `sigmoid(gamma)` (paper Section 5)."""
+        """The task-filter importance matrix `sigmoid(gamma)`."""
         return get_importance(self.encoder, per_layer=per_layer)
 
 
@@ -117,11 +113,11 @@ class TSsBNTrainer(Trainer):
     """`LibMTL.Trainer` with discriminative learning rates for the task-specific scalers.
 
     The sigmoid-BN scalers train at `lr * bn_lr_mul` with weight decay off, everything else at
-    `lr` (Algorithm 1). Only `_prepare_optimizer` and the device are overridden — the rest of
+    `lr`. Only `_prepare_optimizer` and the device are overridden. The rest of
     `Trainer` is untouched.
 
-    `device` defaults to `cuda:0` to match upstream; pass `"cpu"` (or another device) to run
-    elsewhere — upstream `Trainer` hardcodes `cuda:0`, this respects the argument.
+    `device` defaults to `cuda:0`, like upstream. Unlike upstream `Trainer`, which always uses
+    `cuda:0`, this one uses the argument, so `"cpu"` works too.
     """
 
     def __init__(self, *args, bn_lr_mul=100, device="cuda:0", **kwargs):

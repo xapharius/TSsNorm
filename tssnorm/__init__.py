@@ -1,9 +1,11 @@
-"""Task-Specific Sigmoid Normalization for multi-task learning."""
+"""Task-Specific Sigmoid Normalization."""
 
+from .losses import softmax_loss
 from .norms import (
     SigBatchNorm1d,
     SigBatchNorm2d,
     SigLayerNorm,
+    TSModule,
     TSNorm,
     convert_weights,
     init_weight,
@@ -14,10 +16,17 @@ from .utils import (
     SIG_LNS,
     SIG_NORMS,
     active_task,
+    forward_tasks,
     get_importance,
+    get_mean_similarity,
+    get_norms,
+    get_optimizer,
     get_other_param_group,
     get_param_group,
+    get_similarity,
     init_norms,
+    make_heads,
+    optim_factory,
     register_norm,
     set_active_task,
     sigmoidify,
@@ -33,19 +42,28 @@ __all__ = [
     "SigBatchNorm1d",
     "SigBatchNorm2d",
     "SigLayerNorm",
+    "TSModule",
     "TSNorm",
     "active_task",
     "convert_weights",
+    "forward_tasks",
     "get_importance",
+    "get_mean_similarity",
+    "get_norms",
+    "get_optimizer",
     "get_other_param_group",
     "get_param_group",
+    "get_similarity",
     "init_norms",
     "init_weight",
+    "make_heads",
+    "optim_factory",
     "register_norm",
     "set_active_task",
     "sigmoidify",
+    "softmax_loss",
     "taskify",
     "wrap",
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

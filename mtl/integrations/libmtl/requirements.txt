@@ -1,0 +1,17 @@
+# TSsBN in LibMTL (NYUv2, Table 2).
+#
+#   python -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt && pip install -e ../../..
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+
+# LibMTL GitHub main, not the PyPI 1.1.5 release. Main resolves architectures by name, so
+# register() works, and LibMTL's own examples target it.
+LibMTL @ git+https://github.com/median-research-group/LibMTL.git@4336804847eaa5e0b924b743d76beec7ac3fdc97
+
+# imported by LibMTL main at load time, but not declared by it
+scipy==1.17.1
+cvxpy==1.9.2
+qpsolvers==4.12.0
+torch_geometric==2.8.0

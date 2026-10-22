@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tssnorm"
-version = "1.0.0"
-description = "Simplifying Multi-Task Architectures Through Task-Specific Normalization (TMLR)"
+version = "1.1.0"
+description = "Sigmoid-modulated, task-specific normalization for multi-task learning and implicit ensembles (TMLR)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -14,10 +14,10 @@ authors = [
     { name = "Ovidiu Serban" },
 ]
 dependencies = ["torch>=1.12"]
-keywords = ["multi-task learning", "batch normalization", "pytorch"]
+keywords = ["multi-task learning", "ensembles", "uncertainty", "normalization", "pytorch"]
 
 [project.optional-dependencies]
-# tssnorm.analysis needs numpy + scipy; matplotlib is for the analysis/ demo notebook.
+# tssnorm.mtl needs numpy + scipy; matplotlib is for the mtl/examples/ demo notebook.
 analysis = ["numpy", "scipy", "matplotlib"]
 
 [project.urls]

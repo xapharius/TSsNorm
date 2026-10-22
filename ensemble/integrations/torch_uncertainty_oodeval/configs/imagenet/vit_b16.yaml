@@ -1,0 +1,56 @@
+# σN-Ens, ViT-B/16 pretrained on ImageNet-21k with AugReg, converted and fine-tuned on ImageNet.
+# data.root is a local ImageNet folder with train/, val/ and the devkit.
+# Batch 256 fits an 80 GB GPU. On a smaller one, lower data.batch_size and raise
+# trainer.accumulate_grad_batches to match.
+seed_everything: false
+eval_after_fit: true
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  max_steps: 20000
+  val_check_interval: 2000
+  logger:
+    class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      save_dir: logs/imagenet/vit_b16
+      name: sigma_n_ens
+      default_hp_metric: false
+  callbacks:
+    # TUClsCheckpoint saves only at the end of an epoch. ImageNet validates every 2000 steps.
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val/cls/Acc
+        mode: max
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: step
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val/cls/Acc
+        patience: 1000
+        check_finite: true
+model:
+  num_classes: 1000
+  arch: vit_base_patch16_224.augreg_in21k
+  num_estimators: 4
+  tau: 1.0
+  reg_weight: 1.0e-3
+  reg_on: ["blocks.*.norm2"]
+  eval_ood: true
+  optimizer:
+    class_path: torch.optim.SGD
+    init_args:
+      lr: 0.01
+      momentum: 0.9
+  lr_scheduler:
+    class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+    init_args:
+      T_max: 20000
+data:
+  class_path: tssnorm_tu.ViTImageNet
+  init_args:
+    root: ./data/imagenet
+    batch_size: 256
+    eval_ood: true
+    num_workers: 16

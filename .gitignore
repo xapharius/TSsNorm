@@ -11,5 +11,14 @@ __pycache__/
 .DS_Store
 
 # importance matrices for the analysis demo
-analysis/models/*.npy
-analysis/models/*.pt
+mtl/examples/models/*.npy
+mtl/examples/models/*.pt
+
+# written by ensemble/examples/demo.ipynb
+ensemble/examples/*.pt
+ensemble/examples/data/
+ensemble/examples/logs/
+
+# written by the TorchUncertainty integrations
+ensemble/integrations/*/logs/
+ensemble/integrations/*/data/

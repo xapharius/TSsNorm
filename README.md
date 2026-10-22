@@ -1,75 +1,81 @@
-# TSsNorm — Task-Specific Sigmoid Normalization
+# TSsNorm
 
-Reference implementation for **"Simplifying Multi-Task Architectures Through Task-Specific
-Normalization"** (TMLR).
+The official repo for TSσBN and σN-Ens, both relying on the σNorm primitive for modulation.
 
-Multi-task learning, using normalization layers alone. Every `BatchNorm` / `LayerNorm` in a
-shared backbone is made **sigmoid-modulated** (its affine scale becomes `sigmoid(gamma)`, a
-bounded per-feature scaler) and **task-specific** (one copy per task). No task-specific feature
-extractors, no routing — the scalers do the work, and they double as an interpretable
-task-filter importance matrix.
+The method changes the normalization layers of a network. The scale of each BatchNorm and
+LayerNorm becomes `sigmoid(gamma)`, and the learned shift is dropped. Each task or member gets its own
+copy of these layers, while the rest of the backbone is shared. The sigmoid keeps every scale between
+0 and 1, and can be interpreted as the importance of that channel for a given task.
+
+Based on these importances, capacity and relationships can be read out and influenced during training.
+
+
+The two papers apply the method to different kinds of task.
+
+| folder | use | a task is | paper |
+|---|---|---|---|
+| [`mtl/`](mtl/) | multi-task learning (TSσNorm) | one prediction target, such as depth | *Simplifying Multi-Task Architectures Through Task-Specific Normalization* |
+| [`ensemble/`](ensemble/) | implicit ensembles (σN-Ens) | an ensemble member | *Controllable Diversity in Normalization-Based Implicit Ensembles via Softmax-Temperature Modulation* |
+
+
+## Usage
 
 ```python
 import torch
-from tssnorm import (wrap, active_task, get_param_group, get_other_param_group,
-                     SIG_BNS, SIG_LNS, SIG_NORMS)
+from tssnorm import active_task, forward_tasks, optim_factory, wrap
 
-tasks, lr = ["seg", "depth", "normals"], 1e-4
-wrap(model.encoder, tasks)                                # BN/LN -> per-task sigmoid norms
+tasks = ["seg", "depth", "normals"]
+wrap(model.encoder, tasks)                                # sigmoid norms, one copy per task
+optim = optim_factory(model, torch.optim.SGD, lr=1e-4)    # scales at 100 times the base rate
 
-optim = torch.optim.SGD([                                 # discriminative learning rates
-    {**get_param_group(model, SIG_BNS), "lr": lr * 100},  # BN scalers   (alpha = 100)
-    {**get_param_group(model, SIG_LNS), "lr": lr * 10},   # LN scalers   (alpha = 10)
-    {**get_other_param_group(model, excluding=SIG_NORMS), "lr": lr},
-])
-
-out = {}
-for task in tasks:                                        # one forward per task
-    with active_task(model.encoder, task):
-        out[task] = model(x)
+features = forward_tasks(model.encoder, x)                # {task: output}, one pass per task
+with active_task(model.encoder, "seg"):                   # or one task at a time
+    seg = model.encoder(x)
 ```
 
-The three groups partition the model's parameters: the scalers train fast, everything else at
-the base rate. A group is simply empty if the backbone has no norms of that kind.
+The scales need a higher learning rate than the other weights. `optim_factory` puts them in
+their own parameter group. For other groupings, `get_optimizer` takes groups with an `lr_mul` each.
 
-`wrap` modulates `BatchNorm1d/2d` and `LayerNorm`. It refuses a normalization layer it does not
-recognise rather than leaving it shared behind your back — a subclass can fold extra behaviour
-into its forward that replacing it would drop (timm's `BatchNormAct2d` fuses an activation).
-Where the swap *is* safe, opt in once:
+Each application has its own README. [`mtl/`](mtl/) covers multi-task learning: an analysis of
+what the scales learned, and two integrations. [`ensemble/`](ensemble/) covers ensembles: training
+from scratch or from a pretrained model, uncertainty, and the benchmarks.
+
+`wrap` handles `BatchNorm1d`, `BatchNorm2d` and `LayerNorm`. It raises an error for any other
+norm layer. Some subclasses change the forward pass. For example, timm's `BatchNormAct2d` adds
+an activation. If a subclass is safe to replace, register it once:
 
 ```python
 import timm.layers
 from tssnorm import register_norm, SigLayerNorm
 
-register_norm(timm.layers.LayerNorm, SigLayerNorm)        # timm ViTs, DeiT, …
+register_norm(timm.layers.LayerNorm, SigLayerNorm)
 ```
 
-See [`examples/basic_usage.ipynb`](examples/basic_usage.ipynb) for the full tour.
+[`examples/basic_usage.ipynb`](examples/basic_usage.ipynb) tours the whole API on a small
+model.
 
 ## Install
 
 ```bash
-pip install -e .                # the core `tssnorm` package (torch only)
-pip install -e ".[analysis]"    # plus the Section 5 analysis toolkit (numpy, scipy, matplotlib)
+pip install -e .                # the tssnorm package, needs only torch
+pip install -e ".[analysis]"    # adds numpy, scipy and matplotlib for tssnorm.mtl
 ```
 
-To run the integration examples as well, recreate the test environment:
+`requirements.txt` pins the environment for the package and the example notebooks. Each
+integration has its own `requirements.txt`. Install each in its own environment, because the
+frameworks pin different versions.
 
-```bash
-pip install -r requirements.txt
-```
+## Layout
 
-
-## What's here
-
-| path | what |
-|------|------|
-| `tssnorm/` | the method: `norms.py` (layers) + `utils.py` (model surgery, param groups, importance) |
-| `tssnorm/analysis.py` | the Section 5 toolkit: capacity, task relationships, filter specialization |
-| `examples/basic_usage.ipynb` | wrap a model, param groups, init, dispatch, importance, pretrained conversion |
-| `analysis/` | demo of the analysis toolkit on a trained NYUv2 TSsBN model |
-| `integrations/libmtl/` | TSsBN in [LibMTL](https://github.com/median-research-group/LibMTL) — Table 2 |
-| `integrations/mlore/` | TSsBN on ViT-S in [MLoRE](https://github.com/YuqiYang213/MLoRE) — Table 3 |
+| path | content |
+|------|---------|
+| `tssnorm/norms.py` | the layers |
+| `tssnorm/utils.py` | model surgery, heads, optimisers, importance and similarity |
+| `tssnorm/losses.py` | the diversity regulariser |
+| `tssnorm/mtl.py` | analysis for multi-task learning |
+| `examples/basic_usage.ipynb` | tour of the API |
+| `mtl/` | multi-task learning: analysis notebook, LibMTL and MLoRE integrations |
+| `ensemble/` | implicit ensembles: demo and benchmark notebooks, TorchUncertainty integrations |
 
 ## Citation
 
@@ -81,6 +87,16 @@ pip install -r requirements.txt
   issn    = {2835-8856},
   year    = {2026},
   url     = {https://openreview.net/forum?id=QNO893OXrS}
+}
+
+@article{suteu2026sigmanens,
+  title   = {Controllable Diversity in Normalization-Based Implicit Ensembles via
+             Softmax-Temperature Modulation},
+  author  = {Suteu, Mihai and Serban, Ovidiu},
+  journal = {Transactions on Machine Learning Research},
+  issn    = {2835-8856},
+  year    = {2026},
+  url     = {https://openreview.net/forum?id=Jk5B1JFrPK}
 }
 ```
 

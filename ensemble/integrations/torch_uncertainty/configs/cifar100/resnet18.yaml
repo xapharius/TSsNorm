@@ -1,0 +1,51 @@
+# σN-Ens, ResNet-18 on CIFAR-100, trained from scratch.
+seed_everything: false
+eval_after_fit: true
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  max_epochs: 200
+  logger:
+    class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      save_dir: logs/cifar100/resnet18
+      name: sigma_n_ens
+      default_hp_metric: false
+  callbacks:
+    - class_path: torch_uncertainty.callbacks.TUClsCheckpoint
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: step
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val/cls/Acc
+        patience: 1000
+        check_finite: true
+model:
+  num_classes: 100
+  arch: resnet18
+  num_estimators: 4
+  tau: 0.1
+  reg_weight: 1.0e-2
+  reg_on: ["layer*.bn2"]
+  eval_ood: true
+  optimizer:
+    class_path: torch.optim.SGD
+    init_args:
+      lr: 0.1
+      momentum: 0.9
+      weight_decay: 1.0e-4
+      nesterov: true
+  lr_scheduler:
+    class_path: torch.optim.lr_scheduler.MultiStepLR
+    init_args:
+      milestones: [60, 120, 160]
+      gamma: 0.2
+data:
+  class_path: torch_uncertainty.datamodules.CIFAR100DataModule
+  init_args:
+    root: ./data
+    batch_size: 128
+    eval_ood: true
+    num_workers: 4

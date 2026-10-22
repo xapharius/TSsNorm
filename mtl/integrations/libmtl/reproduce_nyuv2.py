@@ -1,16 +1,15 @@
-"""Reproduce Table 2 (NYUv2) — TSsBN in LibMTL.
+"""Train TSsBN on NYUv2 with LibMTL.
 
-A standalone LibMTL training script: a sibling to LibMTL's own `examples/nyu/main.py`, with
-TSsBN wired in from the start. It modifies no LibMTL file — LibMTL is a library you write a
-training script against, and this is one. Drop it into `LibMTL/examples/nyu/` (so its
-`utils`, `aspp`, `create_dataset` resolve) and run:
+A LibMTL training script, like LibMTL's own `examples/nyu/main.py`, with TSsBN built in. It
+changes no LibMTL file. Copy it into `LibMTL/examples/nyu/`, where its `utils`, `aspp` and
+`create_dataset` imports resolve, and run:
 
     python reproduce_nyuv2.py --arch TSsBN --dataset_path PATH/nyuv2 --gpu_id 0 \
         --weighting EW --scheduler step --mode train --save_path ./tssbn \
         --epochs 200 --train_bs 8 --test_bs 8
 
-`--arch TSBN` runs the baseline. `--dry-run` builds the model and optimizer and exits (no
-dataset needed) — a fast sanity check before committing to the full run. Requires `tssnorm`
+`--arch TSBN` runs the baseline. `--dry-run` builds the model and the optimizer and exits. It
+needs no dataset. Requires `tssnorm`
 and `tssnorm_libmtl.py` on the path, and LibMTL GitHub main.
 """
 
@@ -82,7 +81,7 @@ class NYUtrainer(TSsBNTrainer):
 def main(params):
     kwargs, optim_param, scheduler_param = build_args(params)
     if params.arch == "TSsBN":
-        kwargs["arch_args"]["convert"] = "clip+bias"      # represent pretrained ResNet-50 scales (App. F.3)
+        kwargs["arch_args"]["convert"] = "clip+bias"      # keep the pretrained ResNet-50 scales
 
     task_dict = build_task_dict()
 
@@ -102,7 +101,7 @@ def main(params):
     )
 
     if params.dry_run:
-        print("dry run — model and optimizer built, no training.")
+        print("dry run: model and optimizer built, no training.")
         for i, g in enumerate(model.optimizer.param_groups):
             print(f"  group {i}: lr={g['lr']:g}  wd={g['weight_decay']:g}  "
                   f"params={sum(p.numel() for p in g['params']):,}")

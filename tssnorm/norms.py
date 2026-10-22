@@ -2,13 +2,17 @@
 Sigmoid-modulated and task-specific normalization layers.
 
 `SigBatchNorm*` / `SigLayerNorm` replace the affine transform of a normalization layer with
-a single bounded scaler per feature. The sigmoid modulates feature usage — it down-weights,
-it does not binarise:
+a single bounded scaler per feature, and no learned shift. The sigmoid scales each feature
+down smoothly:
 
-    sigma_norm(x; gamma) = sigmoid(gamma) * x_hat
+    sigma_norm(x; gamma) = k * sigmoid(gamma) * x_hat
 
-`TSNorm` holds one normalization layer per task and dispatches on the active task. Composing
-the two gives TSsBN/TSsLN: fully shared feature extractors, task-specific modulation.
+`k` is a fixed per-layer constant. It is 1, except after `convert="scale"`, which sets it to
+`max|scale| / 0.95`.
+
+`TSModule` holds one module per task and dispatches on the active task. `TSNorm` is a
+`TSModule` of normalization layers. A model whose norms are `TSNorm`s of sigmoid norms shares
+every other weight between its tasks.
 
 Example
 -------
@@ -41,6 +45,7 @@ __all__ = [
     "SigBatchNorm1d",
     "SigBatchNorm2d",
     "SigLayerNorm",
+    "TSModule",
     "TSNorm",
     "convert_weights",
     "init_weight",
@@ -51,8 +56,8 @@ def init_weight(weight: Tensor, how: str = "const") -> None:
     """Initialise a modulation weight `gamma` in place.
 
     `const` starts every scaler at the centre of its range, sigmoid(0) = 0.5, so no feature is
-    preferred and every task can move freely in either direction; `normal` and `uniform` spread
-    them over (0, 1) instead, starting the tasks already differentiated.
+    preferred. `normal` and `uniform` spread the scalers over (0, 1), so the tasks start
+    different.
     """
     if how == "const":
         nn.init.constant_(weight, 0.0)
@@ -67,47 +72,83 @@ def init_weight(weight: Tensor, how: str = "const") -> None:
 def convert_weights(old: nn.Module, new: nn.Module, how: Optional[str] = None) -> None:
     """Carry a replaced norm's weights onto its modulated counterpart, in place.
 
-    `None` discards them (train from scratch). `clip` maps the old scale onto the new scaler as
-    `gamma <- logit(clip(scale, .05, .95))`, so `sigmoid(gamma)` recovers the pretrained scale
-    wherever it already lay inside `(.05, .95)` — most of it does (App. F.3); scales outside
-    saturate at the clamp. `clip+bias` also copies the frozen bias — an affine layer cannot be
-    made linear unless beta is zero, so keeping beta avoids a conversion shock.
+    `None` discards them (train from scratch). Otherwise the pretrained scale is mapped onto
+    the new scaler:
 
-    Either strategy also carries the replaced layer's running statistics. They are as much of a
+    - `clip` sets `gamma = logit(scale)`, so every scale in `(0, 1)` is reproduced exactly. A
+      scale of 1 or more becomes 0.95, and a scale of 0 or less becomes 0.05.
+    - `scale` sets `k = max|scale| / .95` and `gamma = logit(scale / k)`, so `k * sigmoid(gamma)`
+      reproduces every positive pretrained scale. Use it when scales exceed 1, as in
+      transformer LayerNorms and many ImageNet CNNs.
+
+    Neither can represent a negative scale, which flips a feature's sign. Some training recipes
+    learn many; converting such a model changes its function.
+
+    A `+bias` suffix (`clip+bias`, `scale+bias`) also copies the bias and freezes it. Without
+    it, an affine layer's shift is lost on conversion.
+
+    Both strategies also carry the replaced layer's running statistics. They are as much of a
     pretrained norm's learned state as its scale, and starting them from scratch would undo the
     conversion the moment the model is evaluated.
     """
     if how is None:
         return
-    if how not in ("clip", "clip+bias"):
-        raise ValueError(f"unknown convert {how!r}; use None, 'clip', or 'clip+bias'")
-    if how == "clip+bias" and old.bias is None:
+    strategy, _, suffix = how.partition("+")
+    if strategy not in ("clip", "scale") or suffix not in ("", "bias"):
         raise ValueError(
-            f"convert='clip+bias' has no bias to copy: this {type(old).__name__} has none "
-            "(nn.LayerNorm(bias=False), say). Use convert='clip'."
+            f"unknown convert {how!r}; use None, 'clip', 'clip+bias', 'scale', or 'scale+bias'"
         )
-    weight = old.weight.data.clone().clamp(0.05, 0.95).logit()
+    if suffix and old.bias is None:
+        raise ValueError(
+            f"convert={how!r} has no bias to copy: this {type(old).__name__} has none "
+            f"(nn.LayerNorm(bias=False), say). Use convert={strategy!r}."
+        )
+    scale = old.weight.detach().clone()
+    if strategy == "clip":
+        weight = torch.where(scale >= 1, 0.95, torch.where(scale <= 0, 0.05, scale)).logit()
+    else:
+        k = scale.abs().max() / 0.95
+        weight = (scale.clamp(min=1e-3) / k).logit()
+        new.k.fill_(k)
     new.weight.data.copy_(weight.to(new.weight))
-    if how == "clip+bias":
-        new.bias = nn.Parameter(old.bias.data.clone().to(new.weight), requires_grad=False)
+    if suffix:
+        new.bias = nn.Parameter(old.bias.detach().clone().to(new.weight), requires_grad=False)
     for name, buffer in old.named_buffers(recurse=False):    # BN's running stats; LN has none
         target = getattr(new, name, None)
         if isinstance(target, Tensor) and target.shape == buffer.shape:
             target.data.copy_(buffer.data.to(target))
 
 
-class _SigBatchNorm(_BatchNorm):
+class _Modulated(nn.Module):
+    """What the modulated norms share: the scale `k * sigmoid(gamma)`, and no learned bias."""
+
+    weight: nn.Parameter
+    k: Tensor
+
+    def _modulate(self, init: str) -> None:
+        self.bias = None
+        self.register_buffer("k", torch.ones((), dtype=self.weight.dtype, device=self.weight.device))
+        init_weight(self.weight, init)
+
+    def scale(self) -> Tensor:
+        return self.k * self.weight.sigmoid()
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        state_dict.setdefault(prefix + "k", torch.ones_like(self.k))   # saved before `k` existed
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
+
+class _SigBatchNorm(_Modulated, _BatchNorm):
     """Shared behaviour for the sigmoid-modulated BatchNorms."""
 
     def __init__(self, *args, init: str = "const", **kwargs):
         super().__init__(*args, **kwargs)
         if self.weight is None:
             raise ValueError(f"{type(self).__name__} needs affine=True: the scale is the method")
-        self.bias = None
-        init_weight(self.weight, init)
+        self._modulate(init)
 
     def forward(self, input: Tensor) -> Tensor:
-        """`_BatchNorm.forward`, with `sigmoid(gamma)` as the scale."""
+        """`_BatchNorm.forward`, with `k * sigmoid(gamma)` as the scale."""
         self._check_input_dim(input)
 
         momentum = self.momentum or 0.0
@@ -125,7 +166,7 @@ class _SigBatchNorm(_BatchNorm):
             input,
             self.running_mean if stateful else None,
             self.running_var if stateful else None,
-            self.weight.sigmoid(),
+            self.scale(),
             self.bias,
             use_batch_stats,
             momentum,
@@ -158,7 +199,7 @@ class SigBatchNorm2d(_SigBatchNorm, nn.BatchNorm2d):
     pass
 
 
-class SigLayerNorm(nn.LayerNorm):
+class SigLayerNorm(_Modulated, nn.LayerNorm):
     """Sigmoid-modulated LayerNorm."""
 
     def __init__(self, *args, init: str = "const", **kwargs):
@@ -166,12 +207,11 @@ class SigLayerNorm(nn.LayerNorm):
         if self.weight is None:
             raise ValueError(f"{type(self).__name__} needs elementwise_affine=True: "
                              "the scale is the method")
-        self.bias = None          # the scaler is the only affine parameter
-        init_weight(self.weight, init)
+        self._modulate(init)
 
     def forward(self, input: Tensor) -> Tensor:
-        # bias is None unless a `clip+bias` conversion copied a frozen beta onto it.
-        return F.layer_norm(input, self.normalized_shape, self.weight.sigmoid(), self.bias, self.eps)
+        # bias is None unless a `+bias` conversion copied a frozen beta onto it.
+        return F.layer_norm(input, self.normalized_shape, self.scale(), self.bias, self.eps)
 
     @classmethod
     def like(cls, ln: nn.LayerNorm, init: str = "const"):
@@ -190,17 +230,17 @@ class SigLayerNorm(nn.LayerNorm):
         ).to(device=ln.weight.device, dtype=ln.weight.dtype).train(ln.training)
 
 
-class TSNorm(nn.ModuleDict):
-    """One normalization layer per task, dispatching on the active task.
+class TSModule(nn.ModuleDict):
+    """One module per task, dispatching on the active task.
 
     The task can be given per call, or set once for a whole forward pass with
     `set_active_task` / the `active_task` context manager.
     """
 
-    def __init__(self, norms: dict):
-        if not norms:
-            raise ValueError("TSNorm needs at least one task")
-        super().__init__({str(task): norm for task, norm in norms.items()})
+    def __init__(self, modules: dict):
+        if not modules:
+            raise ValueError(f"{type(self).__name__} needs at least one task")
+        super().__init__({str(task): module for task, module in modules.items()})
         self.active_task: Optional[str] = None
 
     @property
@@ -208,9 +248,9 @@ class TSNorm(nn.ModuleDict):
         return list(self.keys())
 
     @classmethod
-    def like(cls, norm: nn.Module, tasks: Iterable):
-        """One deep copy of `norm` per task."""
-        return cls({task: copy.deepcopy(norm) for task in tasks})
+    def like(cls, module: nn.Module, tasks: Iterable):
+        """One deep copy of `module` per task."""
+        return cls({task: copy.deepcopy(module) for task in tasks})
 
     def forward(self, x: Tensor, task=None) -> Tensor:
         task = self.active_task if task is None else task
@@ -220,12 +260,16 @@ class TSNorm(nn.ModuleDict):
                 f"context manager, or pass task= to this layer. Tasks: {self.tasks}"
             )
         if (task := str(task)) not in self:
-            raise KeyError(f"no norm for task {task!r}; have {self.tasks}")
+            raise KeyError(f"no module for task {task!r}; have {self.tasks}")
         return self[task](x)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}[{len(self)} x {next(iter(self.values()))}]"
+
+
+class TSNorm(TSModule):
+    """One normalization layer per task."""
 
     def weights(self) -> Tensor:
         """The per-task scalers, stacked into a `[tasks, features]` matrix."""
         return torch.stack([norm.weight for norm in self.values()])
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}[{len(self)} x {next(iter(self.values()))}]"

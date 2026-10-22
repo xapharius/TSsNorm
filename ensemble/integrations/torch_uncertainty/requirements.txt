@@ -1,0 +1,17 @@
+# The σN-Ens CIFAR benchmarks.
+#
+#   python -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt && pip install -e ../../..
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torch-uncertainty==0.7.0.post1
+lightning==2.4.0
+torchmetrics==1.4.1
+jsonargparse[signatures]==4.39.0
+tensorboard==2.21.0
+scipy==1.17.1       # torchvision's SVHN loader, for the OOD test
+
+# ensemble/examples/benchmarks.ipynb
+pandas==3.0.6
+jupyter==1.1.1

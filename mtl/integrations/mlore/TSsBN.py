@@ -1,15 +1,16 @@
-"""TSsBN for the MLoRE PascalContext benchmark (paper Table 3).
+"""TSsBN for MLoRE's PascalContext benchmark.
 
-A pretrained ViT-S backbone is made task-specific with normalization only (App. F.4):
+A pretrained ViT-S backbone becomes task-specific through its normalization layers only:
 
-- the patch embedding gets a LayerNorm (sigmoid-modulated for TSsBN, plain for TSBN),
-- all remaining backbone LayerNorms -> task-specific LayerNorm (`taskify`; kept un-modulated,
-  since pretrained LN scales often exceed the sigmoid co-domain),
-- a small multi-scale fusion module whose BatchNorms become task-specific sigmoid-BN.
+- The patch embedding gets a LayerNorm, sigmoid-modulated for TSsBN and plain for TSBN.
+- Every other backbone LayerNorm becomes task-specific but stays plain, because pretrained
+  LayerNorm scales often exceed the sigmoid's range.
+- A small multi-scale fusion module follows, whose BatchNorms become task-specific sigmoid
+  BatchNorms.
 
 Drop this file in as `MLoRE/models/TSsBN.py`. See this directory's README for the three
-`common_config.py` edits that wire it in. Requires `tssnorm`, plus MLoRE's own deps
-(`timm`, `einops`). Dropout / DropPath are disabled, as in the paper.
+`common_config.py` edits that wire it in. Requires `tssnorm`, plus MLoRE's own dependencies
+(`timm`, `einops`). Dropout and DropPath are disabled.
 """
 
 import torch
@@ -133,12 +134,12 @@ class MultiScaleFusion(nn.Module):
 
 
 def get_tssbn_optimizer(model, lr=2e-5, weight_decay=1e-6, lr_bn_mul=100, lr_ln_mul=10):
-    """Adam with discriminative learning rates for the task-specific scalers (Algorithm 1).
+    """Adam with discriminative learning rates for the task-specific scalers.
 
     Sigmoid-BN scalers train at `lr * lr_bn_mul`, all LayerNorms (task-specific plain LNs and
     the sigmoid patch-embed LN) at `lr * lr_ln_mul`, both with weight decay off; everything
     else at `lr`. "Everything else" is the complement of the norm groups, so ViT parameters
-    that live outside a Conv/Linear — `pos_embed`, `cls_token` — are included.
+    that live outside a Conv or Linear, such as `pos_embed` and `cls_token`, are included.
     """
     groups = [
         {**get_param_group(model, SIG_BNS), "lr": lr * lr_bn_mul, "weight_decay": 0.0},
